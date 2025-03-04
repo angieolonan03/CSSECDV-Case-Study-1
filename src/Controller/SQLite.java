@@ -91,6 +91,7 @@ public class SQLite {
             + " password TEXT NOT NULL,\n"
             + " role INTEGER DEFAULT 2,\n"
             + " locked INTEGER DEFAULT 0\n"
+            + " failed_attempts INTEGER DEFALUT 0\n"
             + ");";
 
         try (Connection conn = DriverManager.getConnection(driverURL);
@@ -183,26 +184,35 @@ public class SQLite {
         }
     }
     
-    /*
-    public void addUser(String username, String password) {
-        String sql = "INSERT INTO users(username,password) VALUES('" + username + "','" + password + "')";
+    /**
+     * Adds a new user to the database with a specified role (client).
+     * @param username the username of the new user.
+     * @param password the password of the new user (hashed before storing)
+     * @param role the role assigned to the user.
+     */
+    
+    public void addUser(String username, String password, int role) {
+        //String sql = "INSERT INTO users(username,password) VALUES('" + username + "','" + password + "')";
+        
+        String sql = "INSERT INTO users(username,password, role) VALUES(?, ?, ?)";
         
         try (Connection conn = DriverManager.getConnection(driverURL);
-            Statement stmt = conn.createStatement()){
-            stmt.execute(sql);
+            //Statement stmt = conn.createStatement()){
+            //stmt.execute(sql);
             
 //      PREPARED STATEMENT EXAMPLE
 //      String sql = "INSERT INTO users(username,password) VALUES(?,?)";
-//      PreparedStatement pstmt = conn.prepareStatement(sql)) {
-//      pstmt.setString(1, username);
-//      pstmt.setString(2, password);
-//      pstmt.executeUpdate();
+        PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        pstmt.setString(1, username);
+        pstmt.setString(2, hashPassword(password));
+        pstmt.setInt(3, role);
+        pstmt.executeUpdate();
         } catch (Exception ex) {
             System.out.print(ex);
         }
     }
-    */
     
+    /*
     public void addUser(String username, String password, int role) {
         String sql = "INSERT INTO users(username,password,role) VALUES(?, ?, ?)";
         
@@ -219,6 +229,7 @@ public class SQLite {
             System.out.println("Error adding user: " + ex.getMessage());
         }
     }
+    */
  
     public ArrayList<History> getHistory(){
         String sql = "SELECT id, username, name, stock, timestamp FROM history";
@@ -376,6 +387,12 @@ public class SQLite {
         return (user != null) ? user.getId() : -1;
     }
     
+    /**
+     * Updates the role of a user in the database.
+     * @param username the username of the user.
+     * @param role the new role to be assigned.
+     * @return  true if the update was successful, false otherwise.
+     */
     private boolean updateUserRole(String username, int role){
         if(role < 0 || role > 5){
             return false;
@@ -395,12 +412,25 @@ public class SQLite {
         }
     }
     
+    /**
+     * Checks if a user exists in the database.
+     * @param username the username to check.
+     * @return true if the user exists, false otherwise.
+     */
     public boolean doesUserExist(String username){
         return findUserByUsername(username) != null;
     }
     
+    //TO BE DONE
+    //PROBLEM: when entering wrong pw, the user can still login
+    /**
+     * Authenticates a user by verifying their password and tracking failed attempts.
+     * @param username the username of the user.
+     * @param password the password entered by the user.
+     * @return  true if authentication is successful, false otherwise.
+     */
     public boolean authenticateUser(String username, String password) {
-        String sql = "SELECT password FROM users WHERE username = ?";
+        String sql = "SELECT password, failed_attempts FROM users WHERE username = ?";
         try (Connection conn = DriverManager.getConnection(driverURL);
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
@@ -408,14 +438,32 @@ public class SQLite {
             ResultSet rs = pstmt.executeQuery();
 
             if (rs.next()) {
-                return verifyPassword(password, rs.getString("password"));
+                String storedHash = rs.getString("password");
+            int failedAttempts = rs.getInt("failed_attempts");
+
+            if (verifyPassword(password, storedHash)) {
+                resetFailedAttempts(username); // Reset failed attempts on successful login
+                return true;
+            } else {
+                failedAttempts++;
+                updateFailedAttempts(username, failedAttempts);
+                if (failedAttempts >= 5) {
+                    lockUserAccount(username); // Lock account after 5 failed attempts
+                    System.out.println("Account locked due to too many failed login attempts.");
+                }
             }
+        }
         } catch (SQLException ex) {
             System.out.println("Authentication error: " + ex.getMessage());
         }
         return false;
     }
     
+    /**
+     * Checks if a user account is locked.
+     * @param username the username to check.
+     * @return true if the account is locked, false otherwise.
+     */
     public boolean isAccountLocked(String username) {
         String sql = "SELECT locked FROM users WHERE username = ?";
 
@@ -432,10 +480,20 @@ public class SQLite {
         return false;
     }
     
+    /**
+     * Locks a user account.
+     * @param username the username of the account to lock.
+     * @return  true if the account was successfully locked, false otherwise.
+     */
     public boolean lockUserAccount(String username) {
         return updateUserRole(username, 1);
     }
     
+    /**
+     * Unlocks a user account.
+     * @param username the username of the account to unlock.
+     * @return true if the account was successfully unlocked, false otherwise.
+     */
     public boolean unlockUserAccount(String username) {
         return updateUserRole(username, 2);
     }
@@ -458,4 +516,39 @@ public class SQLite {
     private boolean verifyPassword(final String enteredPassword, final String storedHash) {
         return BCrypt.checkpw(enteredPassword, storedHash);
     }
+    
+    //TO BE TESTED
+    /**
+     * Updates the number of failed login attempts for a user.
+     * @param username the username of the user.
+     * @param failedAttempts the new count of failed attempts.
+     */
+    private void updateFailedAttempts(String username, int failedAttempts){
+        String sql = "UPDATE users SET failed_attempts = ? WHERE username = ?";
+        
+        try (Connection conn = DriverManager.getConnection(driverURL);
+                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, failedAttempts);
+            pstmt.setString(2, username);
+            pstmt.executeUpdate();
+        } catch (SQLException ex) {
+            System.out.println("Error updating failed attempts: " + ex.getMessage());
+        }
+    }
+    
+    /**
+     * Resets the failed login attempts count for a user.
+     * @param username the username of the user.
+     */
+    private void resetFailedAttempts(String username) {
+        String sql = "UPDATE users SET failed_attempts = 0 WHERE username = ?";
+        try (Connection conn = DriverManager.getConnection(driverURL);
+                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, username);
+            pstmt.executeUpdate();
+        } catch (SQLException ex) {
+            System.out.println("Error resetting failed attempts: " + ex.getMessage());
+        }
+    }
+    
 }
