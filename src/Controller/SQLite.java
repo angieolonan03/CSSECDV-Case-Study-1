@@ -91,7 +91,6 @@ public class SQLite {
             + " password TEXT NOT NULL,\n"
             + " role INTEGER DEFAULT 2,\n"
             + " locked INTEGER DEFAULT 0\n"
-            + " failed_attempts INTEGER DEFALUT 0\n"
             + ");";
 
         try (Connection conn = DriverManager.getConnection(driverURL);
