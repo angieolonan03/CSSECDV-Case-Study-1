@@ -257,7 +257,8 @@ public class Frame extends javax.swing.JFrame {
     }
     
     public void registerAction(String username, String password, String confpass){
-        main.sqlite.addUser(username, password);
+        int defaultRole = 2;
+        main.sqlite.addUser(username, password, defaultRole);
     }
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
